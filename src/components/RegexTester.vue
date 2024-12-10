@@ -28,10 +28,10 @@
         </template>
       </el-input>
 
-      <div class="flags-info">
+      <div class="flag-container">
         <div class="flag-item">
           <span class="flag-label">g</span>
-          <span class="flag-desc">全局匹配 - 查找所有匹配项</span>
+          <span class="flag-desc">全局匹配</span>
         </div>
         <div class="flag-item">
           <span class="flag-label">i</span>
@@ -39,7 +39,7 @@
         </div>
         <div class="flag-item">
           <span class="flag-label">m</span>
-          <span class="flag-desc">多行匹配 - 使 ^ 和 $ 匹配每一行的开始和结束</span>
+          <span class="flag-desc">多行匹配</span>
         </div>
       </div>
       
@@ -103,13 +103,16 @@
                       #{{ index + 1 }}
                     </el-tag>
                     <el-tag type="success" class="match-content code-font">
-                      {{ match }}
+                      {{ match.text }}
+                    </el-tag>
+                    <el-tag type="warning" class="match-index" size="small">
+                      位置: {{ match.index }}
                     </el-tag>
                     <el-button
                       type="primary"
                       link
                       size="small"
-                      @click="copyToClipboard(match)"
+                      @click="copyToClipboard(match.text)"
                     >
                       复制
                     </el-button>
@@ -125,21 +128,32 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Edit } from '@element-plus/icons-vue'
 
 const pattern = ref('')
-const testText = ref('')
+const testText = ref(`test@example.com
+support@gmail.com
+john.doe@company.cn
+user@sub.domain.com`)
 const activeFlags = ref(['g'])
 const matches = ref([])
 const regexError = ref('')
 
+// 默认的正则表达式：匹配电子邮件
+pattern.value = '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}'
+
+// 组件加载时执行正则匹配
+onMounted(() => {
+  updateRegex()
+})
+
 const getFlagDescription = (flag) => {
   const descriptions = {
-    g: '全局匹配 - 查找所有匹配项而非在第一个匹配后停止',
+    g: '全局匹配 - 查找所有匹配项',
     i: '忽略大小写 - 使匹配不区分大小写',
-    m: '多行匹配 - ^和$匹配每一行的开始和结束'
+    m: '多行匹配 - 使 ^ 和 $ 匹配每一行的开始和结束'
   }
   return descriptions[flag]
 }
@@ -175,7 +189,7 @@ const resultStatus = computed(() => {
     return {
       alertType: 'success',
       icon: 'CircleCheckFilled',
-      message: `匹��成功！`,
+      message: '匹配成功！',
       description: `共找到 ${matches.value.length} 个匹配项`
     }
   }
@@ -187,6 +201,21 @@ const resultStatus = computed(() => {
   }
 })
 
+const createRegex = (pattern, flags) => {
+  try {
+    // 如果模式已经是正则表达式格式（以/开始和结束），则提取实际的模式
+    if (pattern.startsWith('/') && pattern.lastIndexOf('/') > 0) {
+      const lastSlashIndex = pattern.lastIndexOf('/')
+      const patternBody = pattern.slice(1, lastSlashIndex)
+      return new RegExp(patternBody, flags)
+    }
+    // 否则直接使用输入的模式
+    return new RegExp(pattern, flags)
+  } catch (e) {
+    throw new Error(`无效的正则表达式: ${e.message}`)
+  }
+}
+
 const updateRegex = () => {
   regexError.value = ''
   matches.value = []
@@ -194,24 +223,81 @@ const updateRegex = () => {
   if (!pattern.value || !testText.value) return
 
   try {
-    const regex = new RegExp(pattern.value, getFlags())
-    matches.value = [...testText.value.matchAll(regex)].map(m => m[0])
+    // 确保使用全局匹配
+    let flags = getFlags()
+    if (!flags.includes('g')) {
+      flags += 'g'
+    }
+
+    // 创建正则表达式
+    const regex = createRegex(pattern.value, flags)
+    
+    // 获取所有匹配结果
+    const allMatches = Array.from(testText.value.matchAll(regex))
+    
+    // 保存匹配结果
+    matches.value = allMatches.map(match => ({
+      text: match[0],
+      index: match.index,
+      groups: match.groups || {},
+      length: match[0].length
+    }))
   } catch (e) {
     regexError.value = e.message
   }
 }
 
+const escapeHtml = (text) => {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
 const highlightedText = computed(() => {
   if (!pattern.value || !testText.value || regexError.value) {
-    return testText.value
+    return escapeHtml(testText.value)
   }
   try {
-    const regex = new RegExp(pattern.value, getFlags())
-    return testText.value.replace(regex, match => 
-      `<span class="highlight">${match}</span>`
-    )
+    // 确保使用全局匹配
+    let flags = getFlags()
+    if (!flags.includes('g')) {
+      flags += 'g'
+    }
+
+    // 创建正则表达式
+    const regex = createRegex(pattern.value, flags)
+    
+    // 获取所有匹配并排序（按位置）
+    const allMatches = Array.from(testText.value.matchAll(regex))
+      .sort((a, b) => a.index - b.index)
+    
+    if (allMatches.length === 0) {
+      return escapeHtml(testText.value)
+    }
+
+    // 构建高亮文本
+    let result = ''
+    let lastIndex = 0
+
+    allMatches.forEach(match => {
+      // 添加匹配前的文本（需要转义）
+      result += escapeHtml(testText.value.slice(lastIndex, match.index))
+      
+      // 添加高亮的匹配文本（需要转义）
+      result += `<span class="highlight" title="位置: ${match.index}, 长度: ${match[0].length}">${escapeHtml(match[0])}</span>`
+      
+      lastIndex = match.index + match[0].length
+    })
+
+    // 添加剩余的文本（需要转义）
+    result += escapeHtml(testText.value.slice(lastIndex))
+
+    return result
   } catch (e) {
-    return testText.value
+    return escapeHtml(testText.value)
   }
 })
 
@@ -234,11 +320,28 @@ const copyToClipboard = async (text) => {
 
 // 暴露给父组件的方法
 const setPattern = (patternData) => {
-  pattern.value = patternData.pattern
-  if (!testText.value) {
+  try {
+    // 设置正则表达式和示例文本
+    pattern.value = patternData.pattern
     testText.value = patternData.example
+
+    // 重置标志位
+    activeFlags.value = ['g'] // 始终启用全局匹配
+
+    // 检查正则表达式是否需要特殊处理
+    const needsMultiline = /[\n\r]/.test(patternData.example) || 
+                          /[\^$]/.test(patternData.pattern)
+    const needsIgnoreCase = /[a-zA-Z]/i.test(patternData.pattern)
+
+    // 根据需要添加标志位
+    if (needsMultiline) activeFlags.value.push('m')
+    if (needsIgnoreCase) activeFlags.value.push('i')
+
+    // 立即执行匹配
+    updateRegex()
+  } catch (e) {
+    regexError.value = e.message
   }
-  updateRegex()
 }
 
 defineExpose({
@@ -267,7 +370,7 @@ defineExpose({
   margin-bottom: 0.5rem;
 }
 
-.flags-info {
+.flag-container {
   display: flex;
   gap: 1.5rem;
   padding: 0.5rem;
@@ -370,12 +473,19 @@ defineExpose({
 }
 
 :deep(.highlight) {
-  background-color: var(--el-color-success-light-9);
-  color: var(--el-color-success);
-  border: 1px solid var(--el-color-success-light-7);
-  border-radius: 2px;
-  padding: 0 2px;
-  margin: 0 1px;
+  background-color: var(--el-color-success-light-8);
+  color: var(--el-color-success-dark-2);
+  border: 1px solid var(--el-color-success-light-5);
+  border-radius: 3px;
+  padding: 0 4px;
+  margin: 0 2px;
+  cursor: help;
+  transition: all 0.3s ease;
+}
+
+:deep(.highlight:hover) {
+  background-color: var(--el-color-success-light-5);
+  border-color: var(--el-color-success);
 }
 
 .matches-list {
